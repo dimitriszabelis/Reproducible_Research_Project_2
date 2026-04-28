@@ -1,0 +1,254 @@
+---
+title: 'Reproducible Research: Peer Assessment 2 - Major Weather Events Analysis'
+author: "Dimitris Zabelis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    keep_md: true
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+    number_sections: true
+  pdf_document:
+    toc: true
+    toc_depth: 3         
+    number_sections: true
+    highlight: tango
+    latex_engine: xelatex
+---
+```{r, echo=FALSE, results='asis'}
+if (knitr::is_latex_output()) cat("\\newpage")
+```
+
+# Synopsis
+
+
+
+```{r, echo=FALSE, results='asis'}
+if (knitr::is_latex_output()) cat("\\newpage")
+```
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(data.table)
+```
+
+# Data Acquisition
+
+The "repdata_data_StormData.csv" file holds 902,297 rows and 37 columns. Hence, data.table::fread() will be used to read in the data, which is faster than read.csv() and read_csv().
+
+```{r}
+dt <- fread(cmd = "bzip2 -dc repdata_data_StormData.csv.bz2", 
+            header = T, sep = ",")
+```
+
+# Data Profiling
+
+The inspection will be held through the prism of the relevant columns for this project:
+
+- BGN_DATE, which represents the day the weather event started.
+- EVTYPE, which represents the type of the weather event.
+- FATALITIES & INJURIES, which are the counts of direct human deaths and injuries attributed to the event, respectively.
+- PROPDMG & PROPDMGEXP, which are the estimated property damage and its exponent, respectively.
+- CROPDMG & CROPDMGEXP, which are the estimated crop damage and its exponent, respectively.
+
+<u>Important Note</u>:
+
+- As explained in the [Storm Data FAQ Page](https://www.ncei.noaa.gov/stormevents/faq.jsp)(Section:"How are tornadoes counted?"), the health and economic consequences for **multi-county events** (major weather events crossing many counties) are segmented. In other words, when an event crosses many counties the **consequences** of that event are **spread across the respective rows of the different counties the event crosses**. That way, all multi-county events are treated as **separate events** that occur in different counties, where each row that belongs to the same multi-county event carries its own consequences (instead of recycled aggregates representing the total amounts). Hence, during the preprocessing stage, grouping and aggregation will occur so that the overall impact of each event type can be calculated.
+
+```{r}
+relevant_column_names <- c("BGN_DATE","EVTYPE", "FATALITIES", "INJURIES", 
+                           "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+```
+
+Transposed summary of the data.table:
+```{r}
+glimpse(dt[, ..relevant_column_names])
+```
+
+NAs:
+```{r}
+naniar::miss_var_summary(dt[, ..relevant_column_names])
+```
+The 8 relevant columns do not contain any NAs.
+
+Check for the existence of duplicate records:
+```{r}
+janitor::get_dupes(dt)
+```
+There are no duplicates in "dt".
+
+Data summary by relevant variable:
+```{r}
+skimr::skim(dt[, ..relevant_column_names])
+```
+
+Observations from the summary statistics:
+
+- The "EVTYPE" column holds 985 unique values, whereas the number of major weather events is significantly  smaller (48). This points to naming inconsistencies.
+- Most values in the "PROPDMGEXP" and "CROPDMGEXP" columns are empty, signifying that most of the provided numbers in "PROPDMG" and "CROPDMG" are multiplied by 1 (dollars, rather than thousands or millions of dollars)
+- All four numeric columns follow a zero-inflated distribution, that is, a distribution that has a substantial spike at zero and a long right tail of non-zero values.
+
+Unique values of the "PROPDMGEXP" column:
+```{r}
+unique(dt$PROPDMGEXP)
+```
+
+Unique values of the "CROPDMGEXP" column:
+```{r}
+unique(dt$CROPDMGEXP)
+```
+
+# Data Preprocessing
+
+## Description of the Preprocessing Pipeline
+
+Steps in the Preprocessing Pipeline:
+
+1. Rename the Columns
+2. Preprocess the "BGN_DATE" column
+   - Convert to Date
+   - Filter out records before 01/01/1996
+3. Clean the "EVTYPE" Column
+   - Remove trailing and leading whitespaces
+   - Convert to title case
+4. Write the recoding function for the "PROPDMGEXP" & "CROPDMGEXPT" Columns
+5. 
+
+## Notes on the Preprocessing Pipeline
+
+Why filter out records before 01/01/1996?
+
+- Because [NOAA](https://www.ncei.noaa.gov/stormevents/faq.jsp) didn't begin recording all weather event types until that date.
+- More specifically, before 1996, only Tornado, Thunderstorm Wind, and Hail data were collected.
+- The recording of all other weather events presented in the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)(p.6) began after 1996.
+- Considering that, including dates before 1996 could potentially skew the analysis toward these event types.
+
+Why not preprocess the "EVTYPE" column further?
+
+- A full remap of this column is impossible, because certain entries are unmappable. For example, replacing the values “?", “Other”, "Summary of [Month] [Day]" of EVTYPE
+
+Why use a recoding function instead of recoding both columns and producing two new columns?
+
+- Because creating two new columns in a dataset having 902,297 rows would substantially increase memory usage.
+
+## Supporting Objects
+
+The values of both the "types" and "extra_types" vectors that follow will be used as patterns for the extraction and transformation of all 985 unique values of the "EVTYPE" column through the utilization of the stringr::str_extract() function.
+
+The "types" vector holds all 48 unique weather event types from the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)(p.6):
+```{r}
+types <- c(
+  "Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood",
+  "Cold/Wind Chill", "Debris Flow", "Dense Fog", "Dense Smoke",
+  "Drought", "Dust Devil", "Dust Storm", "Excessive Heat",
+  "Extreme Cold/Wind Chill", "Flash Flood", "Frost/Freeze",
+  "Funnel Cloud", "Freezing Fog","Heavy Rain", "Heavy Snow", "High Surf",
+  "Hurricane \\(Typhoon\\)", "Ice Storm", "Lake-Effect Snow", "Lakeshore Flood",
+  "Lightning", "Marine Hail", "Marine High Wind", "Marine Strong Wind",
+  "Marine Thunderstorm Wind", "Rip Current", "Seiche", "Sleet",
+  "Storm Surge/Tide", "Strong Wind", "Thunderstorm Wind", "Tornado",
+  "Tropical Depression", "Tropical Storm", "Tsunami", "Volcanic Ash", "High Wind",
+  "Waterspout", "Wildfire", "Winter Storm", "Winter Weather", "Flood", "Hail", "Heat"
+)
+```
+
+The "extra_types" vector contains the patterns required to extract the remaining unique values of the "EVTYPE" column:
+```{r}
+extra_types <- c(
+        "Dam", "Typhoon", "Volcanic", "Drowning","Smoke", "Vog", "Turbulence",
+        "Hypothermia", "Hyperthermia", "Remnants", "Northern Lights", "Landslump", 
+        "Rock Slide", "Excessive", "Driest", "None", "Wnd", "Apache", "Southeast", 
+        "Metro", 
+        #----------------------------------------------------------------------#
+        "Lighting", "Ligntning", "Tunderstorm", "Thundestorm", "Thuderstorm",
+        "Thundeerstorm", "Thunerstorm", "Mircoburst", "Micoburst", "Floo", 
+        "Avalance", "Torndao",
+        #---------------------------------------------------------------------
+        "Summary", "\\?", "Other", "Tstm", "Snow", "Rain",
+        "Cold", "Hurricane", "Thunderstorm", "Ice", "Freeze", 
+        "Frost", "Fire", "Mud", "Funnel", "Fog", "Microburst", "Warm", "Dry",
+        "Wet", "Hot", "Cool", "Tide", "Surf", "Swell", "Wave", "Surge", "Dust", 
+        "Spout", "Precip", "Freezing", "Glaze", "Mix", "Urban", "Erosion", "Record",
+        "Temp", "Landslide", "Shower", "Marine", "Downburst", "Gustnado", "Mild",
+        "Sea", "Stream", "Beach", "Water", "Icy", "Red Flag", "Wall Cloud",
+        "Storm", "Wind", "Severe", "High"
+)
+```
+
+Regex Matching Notes:
+
+- "Spout" will match both "Waterspout" and "Landspout".
+- "Precip" will match "Precipitation" and the misspelled "Precipatation".
+- "Freezing" will match "Freezing Drizzle" and "Freezing Spray".
+- "Mix" will match "Wintry Mix", "Wintery Mix", "Winter Mix", and "Heavy Mix".
+- "Marine" will match "Marine Mishap" and "Marine Accident".
+- "Sea" will match "High Seas", "Heavy Seas", and "Rough Seas".
+- "Stream" will match "Small Stream" and "Sml Stream Fld".
+- "Beach" will match "Beach Erosion" and the misspelled "Beach Erosin".
+- "Water" will match "High Water" and "Rapidly Rising Water".
+- "Icy" will match "Icy Roads" ("Ice" ≠ "Icy").
+- "Red Flag", will match "Red Flag Fire Wx" and "Red Flag Criteria".
+
+Pattern for regex matching:
+```{r}
+pattern <- str_c(c(types, extra_types), collapse = "|")
+```
+
+Recoding Function:
+```{r}
+
+```
+
+## Preprocessing Pipeline
+
+```{r}
+setnames(dt, relevant_column_names, 
+         c("begin_date","event_type", "fatalities", "injuries", "property_damage", 
+           "property_damage_exponent", "crop_damage", "crop_damage_exponent")
+         )
+
+dt_check <- copy(dt)
+```
+
+```{r}
+dt_check[ 
+        , `:=`(
+                begin_date = as_date(mdy_hms(begin_date)),
+                event_type = str_to_title(str_trim(event_type, side = "both"))
+        )
+][
+        begin_date >= mdy("01/01/1996")
+][
+        , `:=`(
+                event_type = 
+        )
+]
+```
+
+
+```{r}
+which <- str_which(dt_check$event_type, regex(pattern, ignore_case = T), negate = TRUE)
+
+which
+
+unique(dt_check$event_type[which])
+
+extract <- str_extract(dt_check$event_type, regex(pattern, ignore_case = T))
+
+invisible(dt_check[ , event_type := fifelse(is.na(extract), event_type, extract)])
+
+unique(dt_check$event_type)[!(tolower(unique(dt_check$event_type)) %in% tolower(c(types, extra_types)))]
+```
+
+
+# Results
+
+presentation of main results
+
+# Software Environment
+
+```{r}
+sessionInfo()
+```
