@@ -40,7 +40,7 @@ The "repdata_data_StormData.csv" file holds 902,297 rows and 37 columns. Hence, 
 
 ```{r}
 dt <- fread(cmd = "bzip2 -dc repdata_data_StormData.csv.bz2", 
-            header = T, sep = ",")
+            header = T, sep = ",", showProgress = F)
 ```
 
 # Data Profiling
@@ -113,10 +113,19 @@ Steps in the Preprocessing Pipeline:
 3. Clean the "EVTYPE" Column
    - Remove trailing and leading whitespaces
    - Convert to title case
-4. Write the recoding function for the "PROPDMGEXP" & "CROPDMGEXPT" Columns
-5. 
+   - Use str_extract() for automatic and bulk transformation of most unique 
+   values of the column.
+   - Use fcase() to manually group the unique values from the output of 
+   str_extract().
+   - Filter out unique values associated with data entry errors or general terms. 
+4. Create two derived columns holding the total property and agricultural damages 
+   - Multiply the damages by their multiplier, which is calculated by 
+   applying the "exponent_to_multiplier" function to the "PROPDMGEXP" and 
+   "CROPDMGEXP" columns.
+5. Remove the NAs step 4. produced.
+6. Group by the "EVTYPE" column and calculate summary statistics.
 
-## Notes on the Preprocessing Pipeline
+## Note regarding the "BGN_DATE" column
 
 Why filter out records before 01/01/1996?
 
@@ -125,15 +134,9 @@ Why filter out records before 01/01/1996?
 - The recording of all other weather events presented in the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)(p.6) began after 1996.
 - Considering that, including dates before 1996 could potentially skew the analysis toward these event types.
 
-Why not preprocess the "EVTYPE" column further?
-
-- A full remap of this column is impossible, because certain entries are unmappable. For example, replacing the values “?", “Other”, "Summary of [Month] [Day]" of EVTYPE
-
-Why use a recoding function instead of recoding both columns and producing two new columns?
-
-- Because creating two new columns in a dataset having 902,297 rows would substantially increase memory usage.
-
 ## Supporting Objects
+
+### Related to str_extract()
 
 The values of both the "types" and "extra_types" vectors that follow will be used as patterns for the extraction and transformation of all 985 unique values of the "EVTYPE" column through the utilization of the stringr::str_extract() function.
 
@@ -157,23 +160,23 @@ types <- c(
 The "extra_types" vector contains the patterns required to extract the remaining unique values of the "EVTYPE" column:
 ```{r}
 extra_types <- c(
+        #--- Rare Entries -----------------------------------------------------#
         "Dam", "Typhoon", "Volcanic", "Drowning","Smoke", "Vog", "Turbulence",
         "Hypothermia", "Hyperthermia", "Remnants", "Northern Lights", "Landslump", 
         "Rock Slide", "Excessive", "Driest", "None", "Wnd", "Apache", "Southeast", 
-        "Metro", 
-        #----------------------------------------------------------------------#
+        "Metro", "Red Flag", "Wall Cloud", "Freezing Drizzle", "Freezing Spray",
+        #--- Misspellings -----------------------------------------------------#
         "Lighting", "Ligntning", "Tunderstorm", "Thundestorm", "Thuderstorm",
         "Thundeerstorm", "Thunerstorm", "Mircoburst", "Micoburst", "Floo", 
         "Avalance", "Torndao",
-        #---------------------------------------------------------------------
+        #--- Single-Word Patterns ---------------------------------------------#
         "Summary", "\\?", "Other", "Tstm", "Snow", "Rain",
         "Cold", "Hurricane", "Thunderstorm", "Ice", "Freeze", 
         "Frost", "Fire", "Mud", "Funnel", "Fog", "Microburst", "Warm", "Dry",
         "Wet", "Hot", "Cool", "Tide", "Surf", "Swell", "Wave", "Surge", "Dust", 
-        "Spout", "Precip", "Freezing", "Glaze", "Mix", "Urban", "Erosion", "Record",
-        "Temp", "Landslide", "Shower", "Marine", "Downburst", "Gustnado", "Mild",
-        "Sea", "Stream", "Beach", "Water", "Icy", "Red Flag", "Wall Cloud",
-        "Storm", "Wind", "Severe", "High"
+        "Spout", "Precip","Glaze", "Mix", "Urban", "Erosion", "Record", "Temp", 
+        "Landslide", "Shower", "Marine", "Downburst", "Gustnado", "Mild", "Sea", 
+        "Stream", "Beach", "Water", "Icy", "Storm", "Wind", "Severe", "High"
 )
 ```
 
@@ -181,7 +184,6 @@ Regex Matching Notes:
 
 - "Spout" will match both "Waterspout" and "Landspout".
 - "Precip" will match "Precipitation" and the misspelled "Precipatation".
-- "Freezing" will match "Freezing Drizzle" and "Freezing Spray".
 - "Mix" will match "Wintry Mix", "Wintery Mix", "Winter Mix", and "Heavy Mix".
 - "Marine" will match "Marine Mishap" and "Marine Accident".
 - "Sea" will match "High Seas", "Heavy Seas", and "Rough Seas".
@@ -196,9 +198,147 @@ Pattern for regex matching:
 pattern <- str_c(c(types, extra_types), collapse = "|")
 ```
 
-Recoding Function:
+### Related to the Recoding of the "EVTYPE" Column
+
+The following vectors are used to group similar weather events (with fcase()) to further reduce the number of unique values of the "EVTYPE" column after the application of the stringr::str_extract() function:
 ```{r}
 
+thunderstorm_vals <- c(
+  "Thunderstorm Wind", "Thunderstorm", "Tstm", "Marine Thunderstorm Wind",
+  "Tunderstorm", "Thundestorm", "Thuderstorm", "Thundeerstorm", "Thunerstorm",
+  "Microburst", "Mircoburst", "Micoburst", "Downburst"
+)
+
+lightning_vals <- c("Lightning","Lighting", "Ligntning")
+
+tornado_vals <- c(
+  "Tornado", "Waterspout", "Funnel Cloud", "Funnel",
+  "Spout", "Wall Cloud", "Gustnado", "Torndao", "Spout"
+)
+
+flood_vals <- c(
+  "Flash Flood", "Flood", "Lakeshore Flood", "Coastal Flood",
+  "Storm Surge/Tide", "Surge", "Dam", "Urban", "Stream", "Water", "Floo"
+)
+
+wind_vals <- c("High Wind", "Strong Wind", "Wind", "Wnd", 
+               "Marine High Wind", "Marine Strong Wind")
+
+hail_vals <- c("Marine Hail", "Hail")
+
+winter_snow_vals <- c(
+  "Heavy Snow", "Blizzard", "Winter Storm", "Winter Weather",
+  "Lake-Effect Snow", "Snow", "Ice Storm", "Sleet",
+  "Ice", "Glaze", "Mix", "Icy"
+)
+
+cold_vals <- c(
+  "Cold/Wind Chill", "Extreme Cold/Wind Chill", "Cold", "Cool",
+  "Hypothermia", "Frost/Freeze", "Frost", "Freeze"
+)
+
+hurricane_tropical_vals <- c(
+  "Hurricane (Typhoon)", "Typhoon", "Hurricane",
+  "Tropical Storm", "Tropical Depression", "Remnants"
+)
+
+heat_vals <- c("Excessive Heat", "Heat", "Hot", "Warm", "Hyperthermia")
+
+drought_vals <- c("Drought", "Dry", "Driest")
+
+fog_vals <- c("Dense Fog", "Fog", "Freezing Fog")
+
+smoke_vals <- c("Dense Smoke", "Smoke")
+
+rain_vals <- c("Heavy Rain", "Rain", "Shower", "Wet", 
+               "Precip", "Freezing Drizzle")
+
+wildfire_vals <- c("Wildfire", "Fire")
+
+avalanche_vals <- c("Avalanche", "Avalance")
+
+landslide_vals <- c("Landslide", "Debris Flow", "Mud", "Rock Slide", "Landslump")
+
+dust_vals <- c("Dust Devil", "Dust Storm", "Dust")
+
+volcanic_vals <- c("Volcanic Ash", "Volcanic","Vog")
+
+marine_coastal_vals <- c(
+  "Rip Current", "High Surf", "Surf", "Swell", "Wave", "Astronomical Low Tide",
+  "Sea", "Beach", "Tide", "Freezing Spray", "Tsunami", "Seiche",
+  "Marine", # "Marine Mishap" and "Marine Accident"
+  "Erosion" # Coastal Erosion
+)
+```
+
+Note that marinal weather events are spread across different groups. This should be changed for marine vs land analysis, but suffices for this project.
+
+- Most marinal weather events are part of the "Marine/Coastal" group. 
+- "Marine Thunderstorm Wind" is part of the "Thunderstorm" group.
+- "Marine High Wind" and "Marine Strong Wind" are part of the "wind" group. 
+- "Marine Hail" is part of the "Hail" group.
+
+The following strings are values that are not grouped (that is, values that pass through fcase() unchanged via the default parameter):
+
+- "Drowning", "Northern Lights", "Storm", "Severe","High", "Mild", "Record"
+- "Temp", "None", "Summary", "Other", "Apache", "Southeast", "Metro", "Excessive"
+- "Red Flag", "Turbulence"
+
+These values mostly represent data entry errors or very generic terms that could be attached to many different weather events.
+
+All of the above values that do not belong to a group are filtered out except for the "Turbulence" value.
+
+The "filter_out_vals" vector holds the abovementioned values (excluding "Turbulence"):
+```{r}
+filter_out_vals <- c(
+        "Drowning", "Northern Lights", "Storm", "Severe","High", "Mild", "Record", 
+        "Temp", "None", "Summary","Other", "Apache", "Southeast", "Metro", 
+        "Excessive", "Red Flag"
+) 
+```
+
+Recoding Function for the "EVTYPE" column:
+```{r}
+recode_event_type <- function(event_type){
+        fcase(
+                event_type %chin% thunderstorm_vals,       "Thunderstorm",
+                event_type %chin% lightning_vals,          "Lightning",
+                event_type %chin% tornado_vals,            "Tornado",
+                event_type %chin% flood_vals,              "Flood",
+                event_type %chin% wind_vals,               "Wind",
+                event_type %chin% hail_vals,               "Hail",
+                event_type %chin% winter_snow_vals,        "Winter Storm",
+                event_type %chin% cold_vals,               "Cold",
+                event_type %chin% hurricane_tropical_vals, "Hurricane/Typhoon",
+                event_type %chin% heat_vals,               "Heat",
+                event_type %chin% drought_vals,            "Drought",
+                event_type %chin% fog_vals,                "Fog",
+                event_type %chin% smoke_vals,              "Smoke",
+                event_type %chin% rain_vals,               "Heavy Rain",
+                event_type %chin% wildfire_vals,           "Fire",
+                event_type %chin% avalanche_vals,          "Avalanche",
+                event_type %chin% landslide_vals,          "Landslide",
+                event_type %chin% dust_vals,               "Dust Storm",
+                event_type %chin% volcanic_vals,           "Volcanic Ash",
+                event_type %chin% marine_coastal_vals,     "Marine/Coastal",
+                default = event_type
+        )
+}
+```
+
+### Related to the Recoding of the "PROPDMGEXP" and "CROPDMGEXP" Columns
+
+Recoding Function for the "PROPDMGEXP" and "CROPDMGEXP" columns:
+```{r}
+exponent_to_multiplier <- function(exp){
+        fcase(
+                exp %chin% c("H" , "h"), 1e2,
+                exp %chin% c("K" , "k"), 1e3,
+                exp %chin% c("M", "m"), 1e6,
+                exp %chin% c("B"), 1e9,
+                default = NA # all digits from 0 to 8, "+" , "?", "-", & ""
+        )
+}
 ```
 
 ## Preprocessing Pipeline
@@ -222,26 +362,43 @@ dt_check[
         begin_date >= mdy("01/01/1996")
 ][
         , `:=`(
-                event_type = 
+                event_type = str_extract(
+                        event_type, 
+                        regex(pattern, ignore_case = T)
+                ), 
+                event_type = recode_event_type(event_type)
         )
+][
+        !(event_type %chin% filter_out_vals)
+][
+        , `:=`(
+                total_property_damage = 
+                        property_damage * 
+                        exponent_to_multiplier(property_damage_exponent),
+                total_crop_damage = 
+                        crop_damage * 
+                        exponent_to_multiplier(crop_damage_exponent)
+        )
+][
+        complete.cases(dt_check[, .(total_property_damage, total_crop_damage)])
+][
+        , .(
+                count = .N,
+                fatalities_per_type = sum(fatalities),
+                injuries_per_type = sum(injuries),
+                total_property_damage_per_type = sum(total_property_damage),
+                total_crop_damage_per_type = sum(total_crop_damage)
+        ), by = event_type
+][
+        , `:=`(
+                health_consequences_per_type = fatalities_per_type + injuries_per_type,
+                damages_per_type = 
+                        total_property_damage_per_type + total_crop_damage_per_type 
+        )
+][
+        order(-health_consequences_per_type, -damages_per_type)
 ]
 ```
-
-
-```{r}
-which <- str_which(dt_check$event_type, regex(pattern, ignore_case = T), negate = TRUE)
-
-which
-
-unique(dt_check$event_type[which])
-
-extract <- str_extract(dt_check$event_type, regex(pattern, ignore_case = T))
-
-invisible(dt_check[ , event_type := fifelse(is.na(extract), event_type, extract)])
-
-unique(dt_check$event_type)[!(tolower(unique(dt_check$event_type)) %in% tolower(c(types, extra_types)))]
-```
-
 
 # Results
 

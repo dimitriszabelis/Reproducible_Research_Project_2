@@ -6,3 +6,4 @@
 first_try.Rmd
 second_try.Rmd
 *.bz2
+recode_event_type.R
