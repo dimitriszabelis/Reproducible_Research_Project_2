@@ -213,22 +213,22 @@ lightning_vals <- c("Lightning","Lighting", "Ligntning")
 
 tornado_vals <- c(
   "Tornado", "Waterspout", "Funnel Cloud", "Funnel",
-  "Spout", "Wall Cloud", "Gustnado", "Torndao", "Spout"
+  "Spout", "Wall Cloud", "Gustnado", "Torndao", "spout"
 )
 
 flood_vals <- c(
-  "Flash Flood", "Flood", "Lakeshore Flood", "Coastal Flood",
+  "Flash Flood", "Flood", "Lakeshore Flood", "Coastal Flood", "flood",
   "Storm Surge/Tide", "Surge", "Dam", "Urban", "Stream", "Water", "Floo"
 )
 
-wind_vals <- c("High Wind", "Strong Wind", "Wind", "Wnd", 
+wind_vals <- c("High Wind", "Strong Wind", "Wind", "Wnd", "wind", 
                "Marine High Wind", "Marine Strong Wind")
 
 hail_vals <- c("Marine Hail", "Hail")
 
 winter_snow_vals <- c(
   "Heavy Snow", "Blizzard", "Winter Storm", "Winter Weather",
-  "Lake-Effect Snow", "Snow", "Ice Storm", "Sleet",
+  "Lake-Effect Snow", "Snow", "snow" ,"Ice Storm", "Sleet",
   "Ice", "Glaze", "Mix", "Icy"
 )
 
@@ -265,11 +265,14 @@ volcanic_vals <- c("Volcanic Ash", "Volcanic","Vog")
 
 marine_coastal_vals <- c(
   "Rip Current", "High Surf", "Surf", "Swell", "Wave", "Astronomical Low Tide",
-  "Sea", "Beach", "Tide", "Freezing Spray", "Tsunami", "Seiche",
+  "Sea", "sea", "Beach", "Tide", "Freezing Spray", "Tsunami", "Seiche",
   "Marine", # "Marine Mishap" and "Marine Accident"
   "Erosion" # Coastal Erosion
 )
 ```
+
+Note that NOAA separates "Thunderstorm Wind" and "Lightning" on the basis that they
+are different hazards, even though both categories belong to the same storm system. Regarding the former, the health or economic consequences are caused by the wind of the storm. Regarding the latter, the health or economic consequences are caused by a lightning strike.
 
 Note that marinal weather events are spread across different groups. This should be changed for marine vs land analysis, but suffices for this project.
 
@@ -293,7 +296,7 @@ The "filter_out_vals" vector holds the abovementioned values (excluding "Turbule
 filter_out_vals <- c(
         "Drowning", "Northern Lights", "Storm", "Severe","High", "Mild", "Record", 
         "Temp", "None", "Summary","Other", "Apache", "Southeast", "Metro", 
-        "Excessive", "Red Flag"
+        "Excessive", "Red Flag", "storm"
 ) 
 ```
 
@@ -301,7 +304,7 @@ Recoding Function for the "EVTYPE" column:
 ```{r}
 recode_event_type <- function(event_type){
         fcase(
-                event_type %chin% thunderstorm_vals,       "Thunderstorm",
+                event_type %chin% thunderstorm_vals,       "Thunderstorm Wind",
                 event_type %chin% lightning_vals,          "Lightning",
                 event_type %chin% tornado_vals,            "Tornado",
                 event_type %chin% flood_vals,              "Flood",
@@ -336,7 +339,7 @@ exponent_to_multiplier <- function(exp){
                 exp %chin% c("K" , "k"), 1e3,
                 exp %chin% c("M", "m"), 1e6,
                 exp %chin% c("B"), 1e9,
-                default = NA # all digits from 0 to 8, "+" , "?", "-", & ""
+                default = 0 # all digits from 0 to 8, "+" , "?", "-", & ""
         )
 }
 ```
@@ -349,25 +352,21 @@ setnames(dt, relevant_column_names,
            "property_damage_exponent", "crop_damage", "crop_damage_exponent")
          )
 
-dt_check <- copy(dt)
-```
-
-```{r}
-dt_check[ 
+invisible(dt[ 
         , `:=`(
                 begin_date = as_date(mdy_hms(begin_date)),
                 event_type = str_to_title(str_trim(event_type, side = "both"))
         )
-][
+])
+```
+
+```{r}
+results <- dt[
         begin_date >= mdy("01/01/1996")
 ][
-        , `:=`(
-                event_type = str_extract(
-                        event_type, 
-                        regex(pattern, ignore_case = T)
-                ), 
-                event_type = recode_event_type(event_type)
-        )
+        , event_type := str_extract(event_type, regex(pattern, ignore_case = T))
+][
+        , event_type := recode_event_type(event_type)
 ][
         !(event_type %chin% filter_out_vals)
 ][
@@ -379,8 +378,6 @@ dt_check[
                         crop_damage * 
                         exponent_to_multiplier(crop_damage_exponent)
         )
-][
-        complete.cases(dt_check[, .(total_property_damage, total_crop_damage)])
 ][
         , .(
                 count = .N,
@@ -399,6 +396,15 @@ dt_check[
         order(-health_consequences_per_type, -damages_per_type)
 ]
 ```
+
+```{r}
+unique(results$event_type)
+```
+
+```{r}
+results
+```
+
 
 # Results
 
