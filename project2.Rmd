@@ -1,14 +1,8 @@
 ---
-title: 'Reproducible Research: Peer Assessment 2 - Major Weather Events Analysis'
+title: "Reproducible Research: Peer Assessment 2 - Major Weather Events Analysis"
 author: "Dimitris Zabelis"
 date: "`r Sys.Date()`"
 output:
-  pdf_document:
-    toc: true
-    toc_depth: 3         
-    number_sections: true
-    highlight: tango
-    latex_engine: xelatex
   html_document:
     keep_md: true
     toc: true
@@ -17,21 +11,25 @@ output:
     highlight: tango
     number_sections: true
 ---
-```{r, echo=FALSE, results='asis'}
-if (knitr::is_latex_output()) cat("\\newpage")
-```
-
 # Synopsis
 
+The data set contained information regarding major weather events across the U.S., starting in 1950 and ending in November 2011. It was sourced from the [NOAA storm database](https://www.ncei.noaa.gov/stormevents/faq.jsp), comprising 902,297 records across 37 variables in CSV format compressed via the bzip2 algorithm.
 
+The project set out to identify the weather events that were most harmful to population health and those that had the greatest economic consequences.
 
-```{r, echo=FALSE, results='asis'}
-if (knitr::is_latex_output()) cat("\\newpage")
-```
+Since the data set was extensive, the project utilized the data.table package for both data acquisition and preprocessing, while the results were produced in the tidyverse.
+
+Data profiling revealed inconsistent categorical labels, motivating a structured preprocessing pipeline.
+
+The preprocessing pipeline consisted of many steps. First, dates before Jan 1st, 1996 were filtered out, because NOAA didn’t begin recording all weather event types until that date. Second, str_extract() was used for automatic and bulk transformation of most unique values of the “event_type” column,and then, fcase() was employed to manually gather the remaining unique values into groups of weather events, while data entry errors were filtered out. Third, two derived columns were produced holding the total property and agricultural damages, after recoding their metric prefixes columns. Last, summary statistics were calculated for each unique weather event type.
+
+Regarding the health consequences, tornadoes had the most devastating effect, with a total number of 22183 fatalities and injuries. Floods and heat followed with half the previous count, while thunderstorm winds, lightning, and winter storms were also dangerous. Finally, heat was responsible for the most deaths out of all event types, with tornadoes and floods following.
+
+With regard to the economic consequences, floods were undoubtedly the most catastrophic, resulting in a total of 170.8 billion dollars in damages. Moreover, hurricanes were also calamitous, leading to a financial loss of 95.4 billion dollars, while tornadoes and hail followed. Last, drought was the most destructive agriculturally, causing $13.4B in crop damages.
 
 # Data Acquisition
 
-```{r message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(data.table)
 ```
@@ -55,7 +53,7 @@ The inspection will be held through the prism of the relevant columns for this p
 
 <u>Important Note</u>:
 
-- As explained in the [Storm Data FAQ Page](https://www.ncei.noaa.gov/stormevents/faq.jsp)(Section:"How are tornadoes counted?"), the health and economic consequences for **multi-county events** (major weather events crossing many counties) are segmented. In other words, when an event crosses many counties the **consequences** of that event are **spread across the respective rows of the different counties the event crosses**. That way, all multi-county events are treated as **separate events** that occur in different counties, where each row that belongs to the same multi-county event carries its own consequences (instead of recycled aggregates representing the total amounts). Hence, during the preprocessing stage, grouping and aggregation will occur so that the overall impact of each event type can be calculated.
+- As explained in the [Storm Data FAQ Page](https://www.ncei.noaa.gov/stormevents/faq.jsp) (Section:"How are tornadoes counted?"), the health and economic consequences for **multi-county events** (major weather events crossing many counties) are segmented. In other words, when an event crosses many counties the **consequences** of that event are **spread across the respective rows of the different counties the event crosses**. That way, all multi-county events are treated as **separate events** that occur in different counties, where each row that belongs to the same multi-county event carries its own consequences (instead of recycled aggregates representing the total amounts). Hence, during the preprocessing stage, grouping and aggregation will occur so that the overall impact of each event type can be calculated.
 
 ```{r}
 relevant_column_names <- c("BGN_DATE","EVTYPE", "FATALITIES", "INJURIES", 
@@ -63,31 +61,34 @@ relevant_column_names <- c("BGN_DATE","EVTYPE", "FATALITIES", "INJURIES",
 ```
 
 Transposed summary of the data.table:
-```{r}
+```{r, cache = T}
 glimpse(dt[, ..relevant_column_names])
 ```
 
 NAs:
-```{r}
+```{r, cache = T}
 naniar::miss_var_summary(dt[, ..relevant_column_names])
 ```
 The 8 relevant columns do not contain any NAs.
 
 Check for the existence of duplicate records:
-```{r}
-janitor::get_dupes(dt)
+```{r, cache = T}
+suppressMessages(janitor::get_dupes(dt))
 ```
 There are no duplicates in "dt".
 
 Data summary by relevant variable:
-```{r}
-skimr::skim(dt[, ..relevant_column_names])
+```{r, cache = T}
+skimr::skim_without_charts(dt[, ..relevant_column_names])
 ```
 
 Observations from the summary statistics:
 
-- The "EVTYPE" column holds 985 unique values, whereas the number of major weather events is significantly  smaller (48). This points to naming inconsistencies.
-- Most values in the "PROPDMGEXP" and "CROPDMGEXP" columns are empty, signifying that most of the provided numbers in "PROPDMG" and "CROPDMG" are multiplied by 1 (dollars, rather than thousands or millions of dollars)
+- The "EVTYPE" column holds 985 unique values, whereas the number of major weather 
+events is significantly  smaller (48). This points to naming inconsistencies.
+- The "PROPDMGEXP" and "CROPDMGEXP" columns also seem to have more unique values 
+than what would be expected (that is, only "H" for hundreds, "K" for thousands, 
+"M" for millions, and  "B" for billions of U.S. dollars).
 - All four numeric columns follow a zero-inflated distribution, that is, a distribution that has a substantial spike at zero and a long right tail of non-zero values.
 
 Unique values of the "PROPDMGEXP" column:
@@ -131,7 +132,7 @@ Why filter out records before 01/01/1996?
 
 - Because [NOAA](https://www.ncei.noaa.gov/stormevents/faq.jsp) didn't begin recording all weather event types until that date.
 - More specifically, before 1996, only Tornado, Thunderstorm Wind, and Hail data were collected.
-- The recording of all other weather events presented in the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)(p.6) began after 1996.
+- The recording of all other weather events presented in the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) (p.6) began after 1996.
 - Considering that, including dates before 1996 could potentially skew the analysis toward these event types.
 
 ## Supporting Objects
@@ -140,7 +141,7 @@ Why filter out records before 01/01/1996?
 
 The values of both the "types" and "extra_types" vectors that follow will be used as patterns for the extraction and transformation of all 985 unique values of the "EVTYPE" column through the utilization of the stringr::str_extract() function.
 
-The "types" vector holds all 48 unique weather event types from the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)(p.6):
+The "types" vector holds all 48 unique weather event types from the [storm data event table](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) (p.6):
 ```{r}
 types <- c(
   "Astronomical Low Tide", "Avalanche", "Blizzard", "Coastal Flood",
@@ -289,14 +290,14 @@ The following strings are values that are not grouped (that is, values that pass
 
 These values mostly represent data entry errors or very generic terms that could be attached to many different weather events.
 
-All of the above values that do not belong to a group are filtered out except for the "Turbulence" value.
+All of the above values that do not belong to a group are filtered out.
 
-The "filter_out_vals" vector holds the abovementioned values (excluding "Turbulence"):
+The "filter_out_vals" vector holds the abovementioned values:
 ```{r}
 filter_out_vals <- c(
         "Drowning", "Northern Lights", "Storm", "Severe","High", "Mild", "Record", 
         "Temp", "None", "Summary","Other", "Apache", "Southeast", "Metro", 
-        "Excessive", "Red Flag", "storm"
+        "Excessive", "Red Flag", "storm", "Turbulence"
 ) 
 ```
 
@@ -346,7 +347,7 @@ exponent_to_multiplier <- function(exp){
 
 ## Preprocessing Pipeline
 
-```{r}
+```{r, cache = T}
 setnames(dt, relevant_column_names, 
          c("begin_date","event_type", "fatalities", "injuries", "property_damage", 
            "property_damage_exponent", "crop_damage", "crop_damage_exponent")
@@ -360,7 +361,7 @@ invisible(dt[
 ])
 ```
 
-```{r}
+```{r, cache = T}
 results <- dt[
         begin_date >= mdy("01/01/1996")
 ][
@@ -436,9 +437,11 @@ health_consequences <- results |>
 health_consequences
 ```
 
-```{r, fig.height = 6, fig.width = 11, fig.align = "center"}
-cap1 <- "Weather event types that are most harmful to population health across the U.S. from 1996-01-01 to 2011-11-30"
-knitr::opts_current$set(fig.cap = cap1)
+```{r, include = FALSE}
+cap1 <- "Weather event types that are most harmful to population health across the U.S. from 1996-01-01 to 2011-11-30."
+```
+
+```{r, fig.height = 6, fig.width = 11, fig.align = "center" , cache = T, fig.cap = cap1}
 
 health_consequences |> 
         select(-count) |> 
@@ -447,7 +450,8 @@ health_consequences |>
                      names_to = "component", 
                      values_to = "value") |> 
         mutate(component = factor(component, 
-                                  levels = c("fatalities_per_type", "injuries_per_type"))) |> # flipped in a horizontal bar chart
+                                  levels = c("fatalities_per_type", "injuries_per_type"))) |> 
+                                             # flipped in a horizontal bar chart
         ggplot(aes(x = value, y = fct_rev(event_type), fill = component)) +
         geom_bar(stat = "identity", position = "stack", width = 0.8) +
         geom_text(
@@ -463,8 +467,10 @@ health_consequences |>
         scale_x_continuous(expand = expansion(mult = c(0.01, 0.1)),
                            breaks = seq(from = 0, to = 25000, by = 2500)) +
         scale_fill_manual(name = "Harm Inflicted:",
-                          values = c("fatalities_per_type" = "#0072B2", "injuries_per_type" = "#D55E00"), # Blue & Vermillion
-                          labels = c("fatalities_per_type" = "Fatalities", "injuries_per_type" = "Injuries")
+                          values = c("fatalities_per_type" = "#0072B2", 
+                                     "injuries_per_type" = "#D55E00"), # Blue & Vermillion
+                          labels = c("fatalities_per_type" = "Fatalities", 
+                                     "injuries_per_type" = "Injuries")
         ) + 
         labs(x = "Count of Harmed Individuals (Fatalities & Injuries)", y = "Weather Event Type") +
         theme_bw(base_size = 12) + 
@@ -505,9 +511,11 @@ economic_consequences <- results |>
 economic_consequences
 ```
 
-```{r, fig.height = 6, fig.width = 11, fig.align = "center"}
-cap2 <- "Weather event types with the greatest economic consequences across the U.S. from 1996-01-01 to 2011-11-30"
-knitr::opts_current$set(fig.cap = cap2)
+```{r, include = FALSE}
+cap2 <- "Weather event types with the greatest economic consequences across the U.S. from 1996-01-01 to 2011-11-30."
+```
+
+```{r, fig.height = 6, fig.width = 11, fig.align = "center" , cache = T, fig.cap = cap2}
 
 wide_economic_consequences <- economic_consequences |> slice_head(n = 10)
 
